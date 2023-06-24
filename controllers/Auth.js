@@ -1,5 +1,9 @@
-const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
+const {
+  jwt_accessToken,
+  jwt_refreshToken,
+} = require("../middleware/TokenGenerator.js");
+const { verifyRefrshToken } = require("../middleware/VerifyToken.js");
 const User = require("../model/Auth.js");
 const OTP = require("../model/OTP.js");
 const { Mailer } = require("../middleware/Mailer.js");
@@ -29,15 +33,22 @@ const Signup = async (req, res) => {
       password: hashpass,
     });
 
-    const jwt_token = jwt.sign(
-      { id: response._id, email: response.email },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
-
+    const accessToken = jwt_accessToken(response._id);
+    const refreshToken = jwt_refreshToken(response._id);
+    req.session.user = {
+      query: response.email,
+      refreshToken,
+      accessToken,
+      isLoggedIn: true,
+    };
     return res
       .status(200)
-      .json({ message: "User created Successfully", response, jwt_token });
+      .json({
+        message: "User created Successfully",
+        response,
+        accessToken,
+        refreshToken,
+      });
   } catch (error) {
     console.log(error);
     return res.status(500).json({ message: "Something went wrong, Try again" });
@@ -58,15 +69,43 @@ const Signin = async (req, res) => {
     const password_check = await bcrypt.compare(password, user_exsist.password);
     if (!password_check)
       return res.status(400).json({ message: "Wrong Credentials" });
-    const jwt_token = jwt.sign(
-      { id: user_exsist._id, email: user_exsist.email },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
-    req.session.user = { query, jwt_token, isLoggedIn: true };
+    const accessToken = jwt_accessToken(user_exsist._id);
+    const refreshToken = jwt_refreshToken(user_exsist._id);
+    req.session.user = { query, refreshToken, accessToken, isLoggedIn: true };
     return res
       .status(200)
-      .json({ message: "User logged in Successfully", user_exsist, jwt_token });
+      .json({
+        message: "User logged in Successfully",
+        user_exsist,
+        accessToken,
+        refreshToken,
+      });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ message: "Something went wrong, Try again" });
+  }
+};
+// Route Addon : Verifying and generating new access token and refresh token from old ones
+const RefreshToken = async (req, res) => {
+  try {
+    const refToken = req.session.user.refreshToken;
+    if (!refToken)
+      return res
+        .status(400)
+        .json({ message: "Provide token or Please try after sometime" });
+    const verifyToken = await verifyRefrshToken(refToken);
+    console.log(verifyToken.id);
+    const accessToken = jwt_accessToken(verifyToken.id);
+    const refreshToken = jwt_refreshToken(verifyToken.id);
+    req.session.user = { accessToken, refreshToken };
+
+    return res
+      .status(200)
+      .json({
+        message: "Token generated successfullt",
+        accessToken,
+        refreshToken,
+      });
   } catch (error) {
     console.log(error);
     return res.status(500).json({ message: "Something went wrong, Try again" });
@@ -89,13 +128,11 @@ const ForgetPasswordOtp = async (req, res) => {
       query,
     });
     Mailer(user_exsist.email, Otp);
-    return res
-      .status(200)
-      .json({
-        message: "User found Successfully and OTP sent",
-        user_exsist,
-        response,
-      });
+    return res.status(200).json({
+      message: "User found Successfully and OTP sent",
+      user_exsist,
+      response,
+    });
   } catch (error) {
     console.log(error);
     return res.status(500).json({ message: "Something went wrong, Try again" });
@@ -108,7 +145,12 @@ const ForgetPassword = async (req, res) => {
   try {
     const { Otp, password } = req.body;
     const response = await OTP.findOne({ Otp });
-    if (!response) return res.status(400).json({ message: "Invalid OTP" });
+    if (!response)
+      return res
+        .status(400)
+        .json({
+          message: "Invalid OTP or OTP expired, Try Again after some time.",
+        });
     const user = await User.findOne().or([
       { email: response.query },
       { username: response.query },
@@ -165,6 +207,7 @@ const Logout = (req, res) => {
 module.exports = {
   Signup,
   Signin,
+  RefreshToken,
   ForgetPasswordOtp,
   ForgetPassword,
   ResetPassword,

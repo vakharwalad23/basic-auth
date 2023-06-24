@@ -2,6 +2,7 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session")
 const connect_to_mongo = require("./db.js");
+const { verifyAccessToken } = require("./middleware/VerifyToken.js")
 
 require("dotenv").config();
 connect_to_mongo();
@@ -17,7 +18,7 @@ app.use(session({
 app.use(bodyParser.urlencoded({ extended: false }));
 
 // Routes
-app.get("/", (req, res) => {
+app.get("/", verifyAccessToken, (req, res) => {
   res.send("Backend is Working");
 });
 app.use("/auth", require('./routes/Auth.js'))
